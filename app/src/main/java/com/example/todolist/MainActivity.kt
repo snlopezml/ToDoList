@@ -3,6 +3,7 @@ package com.example.todolist
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.animateColorAsState
@@ -15,10 +16,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,6 +37,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 // ---------- Colores fijos ----------
@@ -73,6 +77,16 @@ private val PaletaOscura = Paleta(
 )
 
 val LocalPaleta = compositionLocalOf { PaletaClara }
+
+// ---------- Avatares predeterminados ----------
+private val avatares = listOf("🐥", "🐱", "🦊", "🐼", "🐨", "🐸", "🦄", "🐧")
+
+// ---------- Secciones del menú ----------
+enum class Seccion(val titulo: String, val emoji: String) {
+    TAREAS("Mis tareas", "📝"),
+    PERFIL("Perfil", "👤"),
+    CONFIGURACION("Configuración", "⚙️")
+}
 
 // ---------- Datos de categoría ----------
 data class Categoria(val nombre: String, val emoji: String, val color: Color)
@@ -114,7 +128,6 @@ class MainActivity : ComponentActivity() {
             var oscuro by rememberSaveable { mutableStateOf(sistemaOscuro) }
             val paleta = if (oscuro) PaletaOscura else PaletaClara
 
-            // Ajusta los íconos de la barra de estado según el tema
             LaunchedEffect(oscuro) {
                 val transparente = android.graphics.Color.TRANSPARENT
                 val estilo = if (oscuro) SystemBarStyle.dark(transparente)
@@ -139,12 +152,268 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ---------- Pantalla principal ----------
+// ---------- Pantalla principal con menú lateral ----------
 @Composable
 fun PantallaPrincipal(
     oscuro: Boolean,
     onCambiarTema: () -> Unit,
     vm: TareaViewModel = viewModel()
+) {
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    var seccion by rememberSaveable { mutableStateOf(Seccion.TAREAS) }
+    var avatar by rememberSaveable { mutableStateOf("🐥") }
+    var mostrarAvatares by remember { mutableStateOf(false) }
+
+    val abrirMenu: () -> Unit = { scope.launch { drawerState.open() } }
+
+    // El botón "atrás" del teléfono regresa a Mis tareas
+    BackHandler(enabled = seccion != Seccion.TAREAS && drawerState.isClosed) {
+        seccion = Seccion.TAREAS
+    }
+
+    if (mostrarAvatares) {
+        SelectorAvatar(
+            actual = avatar,
+            onElegir = { avatar = it; mostrarAvatares = false },
+            onCerrar = { mostrarAvatares = false }
+        )
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            MenuLateral(
+                avatar = avatar,
+                seccionActual = seccion,
+                oscuro = oscuro,
+                onCambiarTema = onCambiarTema,
+                onAvatarClick = { mostrarAvatares = true },
+                onSeccion = { nueva ->
+                    seccion = nueva
+                    scope.launch { drawerState.close() }
+                }
+            )
+        }
+    ) {
+        when (seccion) {
+            Seccion.TAREAS -> PantallaTareas(
+                vm = vm,
+                avatar = avatar,
+                onMenu = abrirMenu,
+                onPerfil = { seccion = Seccion.PERFIL }
+            )
+            Seccion.PERFIL -> PantallaPerfil(
+                avatar = avatar,
+                onMenu = abrirMenu,
+                onElegirAvatar = { avatar = it }
+            )
+            Seccion.CONFIGURACION -> PantallaConfiguracion(
+                oscuro = oscuro,
+                onCambiarTema = onCambiarTema,
+                avatar = avatar,
+                onMenu = abrirMenu,
+                onPerfil = { seccion = Seccion.PERFIL }
+            )
+        }
+    }
+}
+
+// ---------- Menú lateral (navigation drawer) ----------
+@Composable
+fun MenuLateral(
+    avatar: String,
+    seccionActual: Seccion,
+    oscuro: Boolean,
+    onCambiarTema: () -> Unit,
+    onAvatarClick: () -> Unit,
+    onSeccion: (Seccion) -> Unit
+) {
+    val p = LocalPaleta.current
+    ModalDrawerSheet(
+        drawerContainerColor = p.superficie,
+        drawerShape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp)
+    ) {
+        // Cabecera con avatar
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(p.encabezado)
+                .padding(20.dp)
+        ) {
+            Box(
+                Modifier
+                    .size(72.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.15f))
+                    .clickable { onAvatarClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(avatar, fontSize = 40.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Invitado", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Toca tu avatar para cambiarlo",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 12.sp
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Opciones del menú
+        Seccion.entries.forEach { s ->
+            NavigationDrawerItem(
+                label = { Text(s.titulo, fontWeight = FontWeight.Medium) },
+                icon = { Text(s.emoji, fontSize = 18.sp) },
+                selected = s == seccionActual,
+                onClick = { onSeccion(s) },
+                colors = NavigationDrawerItemDefaults.colors(
+                    selectedContainerColor = p.chipActivo.copy(alpha = 0.15f),
+                    unselectedContainerColor = Color.Transparent,
+                    selectedTextColor = p.texto,
+                    unselectedTextColor = p.texto
+                ),
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        HorizontalDivider(
+            color = p.borde.copy(alpha = 0.5f),
+            modifier = Modifier.padding(horizontal = 24.dp)
+        )
+
+        // Interruptor día / noche
+        Row(
+            Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                if (oscuro) "Modo noche" else "Modo día",
+                color = p.texto,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.weight(1f)
+            )
+            InterruptorDiaNoche(oscuro, onCambiarTema)
+        }
+
+        Text(
+            "Versión 1.0",
+            color = p.textoSuave,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 24.dp, bottom = 24.dp)
+        )
+    }
+}
+
+// ---------- Interruptor creativo día / noche ----------
+@Composable
+fun InterruptorDiaNoche(oscuro: Boolean, onCambiar: () -> Unit) {
+    val cielo by animateColorAsState(
+        if (oscuro) Color(0xFF1A2340) else Color(0xFF8FD3FF), tween(400), label = "cielo"
+    )
+    val astro by animateColorAsState(
+        if (oscuro) Color(0xFFE9ECF5) else Color(0xFFFFD34E), tween(400), label = "astro"
+    )
+    val desplazamiento by animateDpAsState(
+        if (oscuro) 30.dp else 0.dp,
+        spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "deslizar"
+    )
+
+    Box(
+        Modifier
+            .width(66.dp)
+            .height(36.dp)
+            .clip(RoundedCornerShape(50))
+            .background(cielo)
+            .clickable { onCambiar() }
+            .padding(3.dp)
+    ) {
+        // Decoración: estrellitas de noche o nube de día
+        if (oscuro) {
+            Text(
+                "✦", color = Color.White.copy(alpha = 0.9f), fontSize = 8.sp,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 8.dp, bottom = 10.dp)
+            )
+            Text(
+                "✦", color = Color.White.copy(alpha = 0.6f), fontSize = 6.sp,
+                modifier = Modifier.align(Alignment.CenterStart).padding(start = 18.dp, top = 12.dp)
+            )
+        } else {
+            Text(
+                "☁️", fontSize = 10.sp,
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp)
+            )
+        }
+        // La bolita: sol o luna
+        Box(
+            Modifier
+                .offset(x = desplazamiento)
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(astro),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(if (oscuro) "🌙" else "☀️", fontSize = 14.sp)
+        }
+    }
+}
+
+// ---------- Barra superior con ☰ y avatar ----------
+@Composable
+fun BarraSuperior(titulo: String, avatar: String, onMenu: () -> Unit, onAvatar: () -> Unit) {
+    val p = LocalPaleta.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(p.fondo)
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(CircleShape)
+                .clickable { onMenu() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("☰", fontSize = 24.sp, color = p.texto)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            titulo,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = p.texto,
+            modifier = Modifier.weight(1f)
+        )
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(p.superficie)
+                .clickable { onAvatar() },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(avatar, fontSize = 22.sp)
+        }
+    }
+}
+
+// ---------- Pantalla: Mis tareas ----------
+@Composable
+fun PantallaTareas(
+    vm: TareaViewModel,
+    avatar: String,
+    onMenu: () -> Unit,
+    onPerfil: () -> Unit
 ) {
     val p = LocalPaleta.current
     val tareas by vm.tareas.collectAsState()
@@ -166,6 +435,7 @@ fun PantallaPrincipal(
 
     Scaffold(
         containerColor = p.fondo,
+        topBar = { BarraSuperior("Mis tareas", avatar, onMenu, onPerfil) },
         bottomBar = {
             BarraAgregar(
                 texto = textoNuevo,
@@ -178,14 +448,14 @@ fun PantallaPrincipal(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { Encabezado(completadas, tareas.size, oscuro, onCambiarTema) }
+            item { Encabezado(completadas, tareas.size) }
             item { FiltroCategorias(filtro) { filtro = it } }
             item {
                 Text(
-                    "Mis tareas",
+                    "Tus pendientes",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = p.texto,
@@ -207,9 +477,240 @@ fun PantallaPrincipal(
     }
 }
 
-// ---------- Encabezado con saludo, progreso, mascota y botón de tema ----------
+// ---------- Pantalla: Perfil (vista, sin login todavía) ----------
 @Composable
-fun Encabezado(completadas: Int, total: Int, oscuro: Boolean, onCambiarTema: () -> Unit) {
+fun PantallaPerfil(avatar: String, onMenu: () -> Unit, onElegirAvatar: (String) -> Unit) {
+    val p = LocalPaleta.current
+    Scaffold(
+        containerColor = p.fondo,
+        topBar = { BarraSuperior("Perfil", avatar, onMenu, {}) }
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
+                    .background(p.chipActivo.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(avatar, fontSize = 64.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("Invitado", color = p.texto, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "Inicia sesión para guardar tu perfil",
+                color = p.textoSuave,
+                fontSize = 13.sp
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            TarjetaConfig("Elige tu avatar") {
+                Box(Modifier.padding(16.dp)) {
+                    GrillaAvatares(avatar, onElegirAvatar)
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            OutlinedButton(
+                onClick = {},
+                enabled = false,
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("🔒  Iniciar sesión · Próximamente")
+            }
+        }
+    }
+}
+
+// ---------- Pantalla: Configuración (vista) ----------
+@Composable
+fun PantallaConfiguracion(
+    oscuro: Boolean,
+    onCambiarTema: () -> Unit,
+    avatar: String,
+    onMenu: () -> Unit,
+    onPerfil: () -> Unit
+) {
+    val p = LocalPaleta.current
+    var idioma by rememberSaveable { mutableStateOf("Español") }
+
+    Scaffold(
+        containerColor = p.fondo,
+        topBar = { BarraSuperior("Configuración", avatar, onMenu, onPerfil) }
+    ) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)
+        ) {
+            TarjetaConfig("Apariencia") {
+                FilaConfig("🌗", "Modo oscuro", if (oscuro) "Activado" else "Desactivado") {
+                    InterruptorDiaNoche(oscuro, onCambiarTema)
+                }
+            }
+
+            TarjetaConfig("Idioma") {
+                FilaConfig("🌐", "Idioma de la app", idioma)
+                Row(
+                    Modifier.padding(start = 66.dp, end = 16.dp, bottom = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("Español" to "🇸🇻", "English" to "🇺🇸").forEach { (nombre, bandera) ->
+                        val activo = nombre == idioma
+                        val fondo by animateColorAsState(
+                            if (activo) p.chipActivo else p.fondo, label = "idioma"
+                        )
+                        Text(
+                            "$bandera $nombre",
+                            color = if (activo) Color.White else p.texto,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(fondo)
+                                .clickable { idioma = nombre }
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+            }
+
+            TarjetaConfig("Próximamente") {
+                FilaConfig("🔔", "Notificaciones", "Disponible pronto") {
+                    Switch(checked = false, onCheckedChange = null, enabled = false)
+                }
+                FilaConfig("⏰", "Recordatorios", "Disponible pronto") {
+                    Switch(checked = false, onCheckedChange = null, enabled = false)
+                }
+            }
+
+            TarjetaConfig("Acerca de") {
+                FilaConfig("📱", "ToDoList", "Versión 1.0")
+                FilaConfig("👩‍💻", "Desarrollado por", "Susan · Programación 3, UTEC")
+            }
+        }
+    }
+}
+
+// ---------- Piezas reutilizables de Configuración ----------
+@Composable
+fun TarjetaConfig(titulo: String, contenido: @Composable ColumnScope.() -> Unit) {
+    val p = LocalPaleta.current
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            titulo,
+            color = p.textoSuave,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+        )
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = p.superficie),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(content = contenido)
+        }
+    }
+}
+
+@Composable
+fun FilaConfig(
+    emoji: String,
+    titulo: String,
+    subtitulo: String,
+    extra: @Composable () -> Unit = {}
+) {
+    val p = LocalPaleta.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(p.fondo),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(emoji, fontSize = 18.sp)
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(titulo, color = p.texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(subtitulo, color = p.textoSuave, fontSize = 12.sp)
+        }
+        extra()
+    }
+}
+
+// ---------- Selector de avatar ----------
+@Composable
+fun GrillaAvatares(actual: String, onElegir: (String) -> Unit) {
+    val p = LocalPaleta.current
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        avatares.chunked(4).forEach { fila ->
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                fila.forEach { emoji ->
+                    val elegido = emoji == actual
+                    val escala by animateFloatAsState(if (elegido) 1.12f else 1f, label = "avatar")
+                    Box(
+                        Modifier
+                            .size(56.dp)
+                            .scale(escala)
+                            .clip(CircleShape)
+                            .background(if (elegido) p.chipActivo.copy(alpha = 0.2f) else p.fondo)
+                            .border(
+                                2.dp,
+                                if (elegido) p.chipActivo else Color.Transparent,
+                                CircleShape
+                            )
+                            .clickable { onElegir(emoji) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(emoji, fontSize = 28.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SelectorAvatar(actual: String, onElegir: (String) -> Unit, onCerrar: () -> Unit) {
+    val p = LocalPaleta.current
+    AlertDialog(
+        onDismissRequest = onCerrar,
+        containerColor = p.superficie,
+        title = { Text("Elige tu avatar", color = p.texto, fontWeight = FontWeight.Bold) },
+        text = { GrillaAvatares(actual, onElegir) },
+        confirmButton = {
+            TextButton(onClick = onCerrar) { Text("Cerrar") }
+        }
+    )
+}
+
+// ---------- Encabezado con saludo, progreso y mascota ----------
+@Composable
+fun Encabezado(completadas: Int, total: Int) {
     val p = LocalPaleta.current
     val hora = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     val saludo = when {
@@ -230,26 +731,7 @@ fun Encabezado(completadas: Int, total: Int, oscuro: Boolean, onCambiarTema: () 
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        saludo,
-                        color = Color.White,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    // Botón para cambiar entre modo claro y oscuro
-                    Box(
-                        Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.15f))
-                            .clickable { onCambiarTema() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(if (oscuro) "☀️" else "🌙", fontSize = 18.sp)
-                    }
-                }
+                Text(saludo, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(
                     "¿Qué vamos a lograr hoy?",
                     color = Color.White.copy(alpha = 0.7f),
