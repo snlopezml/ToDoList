@@ -2,6 +2,7 @@ package com.example.todolist
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.animateColorAsState
@@ -9,6 +10,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,6 +21,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,12 +36,43 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.util.Calendar
 
-// ---------- Colores ----------
-private val Fondo = Color(0xFFF4F3F0)
+// ---------- Colores fijos ----------
 private val Marino = Color(0xFF1F2A44)
 private val Azul = Color(0xFF3D7BFF)
-private val GrisTexto = Color(0xFF8A8F98)
 private val Verde = Color(0xFF34C77B)
+
+// ---------- Paleta de tema (claro / oscuro) ----------
+data class Paleta(
+    val fondo: Color,
+    val superficie: Color,
+    val texto: Color,
+    val textoSuave: Color,
+    val encabezado: Color,
+    val borde: Color,
+    val chipActivo: Color
+)
+
+private val PaletaClara = Paleta(
+    fondo = Color(0xFFF4F3F0),
+    superficie = Color.White,
+    texto = Color(0xFF1F2A44),
+    textoSuave = Color(0xFF8A8F98),
+    encabezado = Color(0xFF1F2A44),
+    borde = Color(0xFFCCD0D8),
+    chipActivo = Color(0xFF1F2A44)
+)
+
+private val PaletaOscura = Paleta(
+    fondo = Color(0xFF14161A),
+    superficie = Color(0xFF1F2329),
+    texto = Color(0xFFE8EAED),
+    textoSuave = Color(0xFF9AA0A6),
+    encabezado = Color(0xFF26324F),
+    borde = Color(0xFF454B55),
+    chipActivo = Color(0xFF3D7BFF)
+)
+
+val LocalPaleta = compositionLocalOf { PaletaClara }
 
 // ---------- Datos de categoría ----------
 data class Categoria(val nombre: String, val emoji: String, val color: Color)
@@ -76,14 +110,30 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
+            val sistemaOscuro = isSystemInDarkTheme()
+            var oscuro by rememberSaveable { mutableStateOf(sistemaOscuro) }
+            val paleta = if (oscuro) PaletaOscura else PaletaClara
+
+            // Ajusta los íconos de la barra de estado según el tema
+            LaunchedEffect(oscuro) {
+                val transparente = android.graphics.Color.TRANSPARENT
+                val estilo = if (oscuro) SystemBarStyle.dark(transparente)
+                else SystemBarStyle.light(transparente, transparente)
+                enableEdgeToEdge(statusBarStyle = estilo, navigationBarStyle = estilo)
+            }
+
             MaterialTheme(
-                colorScheme = lightColorScheme(
-                    primary = Azul,
-                    background = Fondo,
-                    surface = Color.White
-                )
+                colorScheme = if (oscuro)
+                    darkColorScheme(primary = Azul, background = paleta.fondo, surface = paleta.superficie)
+                else
+                    lightColorScheme(primary = Azul, background = paleta.fondo, surface = paleta.superficie)
             ) {
-                PantallaPrincipal()
+                CompositionLocalProvider(LocalPaleta provides paleta) {
+                    PantallaPrincipal(
+                        oscuro = oscuro,
+                        onCambiarTema = { oscuro = !oscuro }
+                    )
+                }
             }
         }
     }
@@ -91,7 +141,12 @@ class MainActivity : ComponentActivity() {
 
 // ---------- Pantalla principal ----------
 @Composable
-fun PantallaPrincipal(vm: TareaViewModel = viewModel()) {
+fun PantallaPrincipal(
+    oscuro: Boolean,
+    onCambiarTema: () -> Unit,
+    vm: TareaViewModel = viewModel()
+) {
+    val p = LocalPaleta.current
     val tareas by vm.tareas.collectAsState()
     var filtro by remember { mutableStateOf("Todas") }
     var textoNuevo by remember { mutableStateOf("") }
@@ -110,7 +165,7 @@ fun PantallaPrincipal(vm: TareaViewModel = viewModel()) {
     }
 
     Scaffold(
-        containerColor = Fondo,
+        containerColor = p.fondo,
         bottomBar = {
             BarraAgregar(
                 texto = textoNuevo,
@@ -126,14 +181,14 @@ fun PantallaPrincipal(vm: TareaViewModel = viewModel()) {
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item { Encabezado(completadas, tareas.size) }
+            item { Encabezado(completadas, tareas.size, oscuro, onCambiarTema) }
             item { FiltroCategorias(filtro) { filtro = it } }
             item {
                 Text(
                     "Mis tareas",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Marino,
+                    color = p.texto,
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
@@ -152,9 +207,10 @@ fun PantallaPrincipal(vm: TareaViewModel = viewModel()) {
     }
 }
 
-// ---------- Encabezado con saludo, progreso y mascota ----------
+// ---------- Encabezado con saludo, progreso, mascota y botón de tema ----------
 @Composable
-fun Encabezado(completadas: Int, total: Int) {
+fun Encabezado(completadas: Int, total: Int, oscuro: Boolean, onCambiarTema: () -> Unit) {
+    val p = LocalPaleta.current
     val hora = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     val saludo = when {
         hora < 12 -> "¡Buenos días!"
@@ -166,7 +222,7 @@ fun Encabezado(completadas: Int, total: Int) {
 
     Card(
         shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = Marino),
+        colors = CardDefaults.cardColors(containerColor = p.encabezado),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -174,7 +230,26 @@ fun Encabezado(completadas: Int, total: Int) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(saludo, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        saludo,
+                        color = Color.White,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    // Botón para cambiar entre modo claro y oscuro
+                    Box(
+                        Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.15f))
+                            .clickable { onCambiarTema() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(if (oscuro) "☀️" else "🌙", fontSize = 18.sp)
+                    }
+                }
                 Text(
                     "¿Qué vamos a lograr hoy?",
                     color = Color.White.copy(alpha = 0.7f),
@@ -241,12 +316,13 @@ fun Mascota(progreso: Float, total: Int) {
 // ---------- Filtro de categorías ----------
 @Composable
 fun FiltroCategorias(seleccion: String, onSeleccion: (String) -> Unit) {
+    val p = LocalPaleta.current
     val opciones = listOf(Categoria("Todas", "✨", Color(0xFFFFF4C7))) + categorias
     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(opciones) { cat ->
             val activa = cat.nombre == seleccion
-            val fondo by animateColorAsState(if (activa) Marino else Color.White, label = "chip")
-            val texto by animateColorAsState(if (activa) Color.White else Marino, label = "chipTexto")
+            val fondo by animateColorAsState(if (activa) p.chipActivo else p.superficie, label = "chip")
+            val texto by animateColorAsState(if (activa) Color.White else p.texto, label = "chipTexto")
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
@@ -277,6 +353,7 @@ fun TarjetaTarea(
     onBorrar: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val p = LocalPaleta.current
     val cat = categoriaDe(tarea.categoria)
     val colorCheck by animateColorAsState(
         if (tarea.completada) Verde else Color.Transparent, label = "check"
@@ -287,13 +364,13 @@ fun TarjetaTarea(
         label = "escala"
     )
     val colorTexto by animateColorAsState(
-        if (tarea.completada) GrisTexto else Marino, label = "texto"
+        if (tarea.completada) p.textoSuave else p.texto, label = "texto"
     )
 
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = p.superficie),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
@@ -310,7 +387,7 @@ fun TarjetaTarea(
                     .background(colorCheck)
                     .border(
                         2.dp,
-                        if (tarea.completada) Verde else Color(0xFFCCD0D8),
+                        if (tarea.completada) Verde else p.borde,
                         CircleShape
                     ),
                 contentAlignment = Alignment.Center
@@ -355,6 +432,7 @@ fun TarjetaTarea(
 // ---------- Estado vacío ----------
 @Composable
 fun EstadoVacio() {
+    val p = LocalPaleta.current
     Column(
         Modifier
             .fillMaxWidth()
@@ -363,22 +441,23 @@ fun EstadoVacio() {
     ) {
         Text("🌱", fontSize = 56.sp)
         Spacer(Modifier.height(8.dp))
-        Text("Nada por aquí todavía", color = Marino, fontWeight = FontWeight.SemiBold)
-        Text("Escribe abajo tu primera tarea", color = GrisTexto, fontSize = 13.sp)
+        Text("Nada por aquí todavía", color = p.texto, fontWeight = FontWeight.SemiBold)
+        Text("Escribe abajo tu primera tarea", color = p.textoSuave, fontSize = 13.sp)
     }
 }
 
 // ---------- Barra inferior para agregar ----------
 @Composable
 fun BarraAgregar(texto: String, onTexto: (String) -> Unit, onAgregar: () -> Unit) {
+    val p = LocalPaleta.current
     val habilitado = texto.isNotBlank()
     val colorBoton by animateColorAsState(
-        if (habilitado) Azul else Color(0xFFCCD0D8), label = "boton"
+        if (habilitado) Azul else p.borde, label = "boton"
     )
     val escala by animateFloatAsState(if (habilitado) 1f else 0.9f, label = "escalaBoton")
 
     Surface(
-        color = Color.White,
+        color = p.superficie,
         shadowElevation = 8.dp,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     ) {
@@ -393,12 +472,14 @@ fun BarraAgregar(texto: String, onTexto: (String) -> Unit, onAgregar: () -> Unit
             TextField(
                 value = texto,
                 onValueChange = onTexto,
-                placeholder = { Text("Quiero hacer...") },
+                placeholder = { Text("Quiero hacer...", color = p.textoSuave) },
                 singleLine = true,
                 shape = RoundedCornerShape(50),
                 colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Fondo,
-                    unfocusedContainerColor = Fondo,
+                    focusedContainerColor = p.fondo,
+                    unfocusedContainerColor = p.fondo,
+                    focusedTextColor = p.texto,
+                    unfocusedTextColor = p.texto,
                     focusedIndicatorColor = Color.Transparent,
                     unfocusedIndicatorColor = Color.Transparent
                 ),
